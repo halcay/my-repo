@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>VVYEIST</title>
+<meta name="description" content="星辰大海 · 可拖动、点击互动的 3D 空间">
+<style>
+  :root{--fg:#f5f3ff;--mute:#a5a1c9;--glass:#ffffff12;--line:#ffffff24}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:#05030d;color:var(--fg);
+    font-family:"Segoe UI",-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-user-select:none;user-select:none}
+  canvas{display:block;position:fixed;inset:0;touch-action:none;cursor:grab}
+  canvas:active{cursor:grabbing}
+
+  .ui{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;
+    padding:max(22px,env(safe-area-inset-top)) 22px max(22px,env(safe-area-inset-bottom))}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .logo{font-size:13px;letter-spacing:.42em;font-weight:600;color:var(--mute)}
+  .count{font-size:12px;color:var(--mute);text-align:right;line-height:1.6;font-variant-numeric:tabular-nums}
+  .count b{display:block;font-size:22px;color:var(--fg);font-weight:600}
+
+  /* 标题放在上方，不挡住中间的星核 */
+  .center{text-align:center;position:fixed;left:0;right:0;top:15vh}
+  h1{font-size:clamp(40px,11vw,130px);font-weight:800;letter-spacing:.06em;line-height:1.1;
+    filter:drop-shadow(0 0 24px color-mix(in srgb,var(--c2) 50%,transparent))}
+  /* 每个字母单独带渐变（字母各自浮动时，父元素的渐变裁字会失效） */
+  h1 span{display:inline-block;animation:float 4.5s ease-in-out infinite;
+    background:linear-gradient(100deg,var(--c1),var(--c2) 50%,var(--c3));background-size:700% 100%;
+    -webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  .sub{margin-top:14px;font-size:clamp(13px,1.6vw,16px);color:var(--mute);letter-spacing:.18em}
+
+  .bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  .hint{font-size:12.5px;color:var(--mute);line-height:1.9}
+  .hint kbd{display:inline-block;min-width:20px;padding:0 6px;border:1px solid var(--line);border-radius:5px;font:11px/18px inherit;text-align:center;color:var(--fg)}
+  .btns{display:flex;gap:8px;pointer-events:auto;flex-wrap:wrap}
+  .btns button{padding:9px 16px;border-radius:99px;border:1px solid var(--line);background:var(--glass);color:var(--fg);
+    font:inherit;font-size:13px;cursor:pointer;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:background .2s,transform .15s}
+  .btns button:hover{background:#ffffff26}
+  .btns button:active{transform:scale(.95)}
+
+  #toast{position:fixed;left:50%;bottom:26%;transform:translate(-50%,-10px);padding:8px 18px;border-radius:99px;background:#000a;border:1px solid var(--line);
+    font-size:13px;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none;backdrop-filter:blur(8px)}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  .frag{margin-top:8px;font-size:12px;color:var(--mute);letter-spacing:.08em}
+  .frag b{color:#fde68a;font-weight:600}
+  .frag.done{color:#fde68a;text-shadow:0 0 12px #fde68a88}
+  /* 发现碎片时浮现的一句话 */
+  #card{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);max-width:min(86vw,460px);padding:22px 28px;border-radius:18px;
+    background:#0b0820cc;border:1px solid #fde68a55;box-shadow:0 0 60px #fde68a22;text-align:center;backdrop-filter:blur(12px);
+    opacity:0;pointer-events:none;transition:opacity .5s,transform .5s}
+  #card.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  #card small{display:block;font-size:11px;letter-spacing:.3em;color:#fde68a;margin-bottom:10px}
+  #card p{font-size:17px;line-height:1.8}
+  #fallback{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;color:var(--mute)}
+  @media (max-width:600px){.hint .pc{display:none}}
+</style>
+</head>
+<body>
+<div class="ui">
+  <div class="top">
+    <div>
+      <div class="logo">VVYEIST</div>
+      <div class="frag" id="frag" title="散落在星海里的发光碎片">✦ 星图碎片 <b id="nFrag">0</b>/7</div>
+    </div>
+    <div class="count"><b id="nBurst">0</b>次能量释放</div>
+  </div>
+  <div class="center">
+    <h1 id="title"></h1>
+    <p class="sub" id="sub">星辰之上 · 大海之间</p>
+  </div>
+  <div class="bottom">
+    <div class="hint">
+      <span class="pc"><kbd>拖动</kbd> 旋转视角　<kbd>滚轮</kbd> 缩放　<kbd>空格</kbd> 超新星　<kbd>C</kbd> 换配色<br></span>
+      点击星核释放能量，连续点击会越来越强
+    </div>
+    <div class="btns">
+      <button id="bPalette">🎨 换配色</button>
+      <button id="bNova">💥 超新星</button>
+      <button id="bWarp">🚀 跃迁</button>
+      <button id="bSound" title="声音">🔇</button>
+      <button onclick="location.href='garden.html'">❀ 光之园</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="card"><small id="cardTag"></small><p id="cardText"></p></div>
+<div id="fallback">这个浏览器不支持 WebGL，3D 效果无法显示。</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// 标题逐字浮动
+// 每个字母取整条渐变里属于自己的那一段，合起来是一条连续的渐变
+$('title').innerHTML = [...'VVYEIST'].map((c, i, a) =>
+  `<span style="animation-delay:${i * .18}s;background-position:${i / (a.length - 1) * 100}% 0">${c}</span>`).join('');
+
+// ---------- 配色 ----------
+const PALETTES = [
+  { name: '星云紫', c: ['#c084fc', '#818cf8', '#22d3ee'], core: '#a78bfa' },
+  { name: '熔岩橙', c: ['#fde047', '#fb923c', '#f43f5e'], core: '#fb923c' },
+  { name: '极光绿', c: ['#a3e635', '#34d399', '#38bdf8'], core: '#34d399' },
+  { name: '樱花粉', c: ['#fbcfe8', '#f472b6', '#c084fc'], core: '#f472b6' },
+  { name: '深海蓝', c: ['#e0f2fe', '#38bdf8', '#6366f1'], core: '#38bdf8' },
+];
+let pal = 0;
+
+// ---------- 场景 ----------
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' }); }
+catch (e) { $('fallback').style.display = 'flex'; throw e; }
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x05030d, 0.018);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 400);
+// 视角稍低，看得到星系和下方的海平线
+camera.position.set(0, 4, 30);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.06;
+controls.enablePan = false;
+controls.minDistance = 8; controls.maxDistance = 70;
+controls.maxPolarAngle = Math.PI * .56;   // 不让视角钻到海面下面
+controls.target.set(0, -1, 0);
+controls.autoRotate = !reduced; controls.autoRotateSpeed = 0.35;
+
+// 发光圆点贴图（让粒子是柔和的圆而不是方块）
+function dotTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, '#fff'); gr.addColorStop(.25, '#ffffffcc'); gr.addColorStop(1, '#ffffff00');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const DOT = dotTexture();
+
+// ---------- 螺旋星系 ----------
+const GAL_N = innerWidth < 700 ? 14000 : 26000;
+const galGeo = new THREE.BufferGeometry();
+const galPos = new Float32Array(GAL_N * 3), galCol = new Float32Array(GAL_N * 3), galRnd = new Float32Array(GAL_N);
+const ARMS = 4;
+for (let i = 0; i < GAL_N; i++) {
+  const r = Math.pow(Math.random(), 1.6) * 22 + 0.6;
+  const arm = (i % ARMS) / ARMS * Math.PI * 2;
+  const spin = r * 0.42;
+  const spread = Math.pow(Math.random(), 3) * (Math.random() < .5 ? 1 : -1) * r * 0.32;
+  const spreadY = Math.pow(Math.random(), 3) * (Math.random() < .5 ? 1 : -1) * (2.2 - r * 0.06);
+  galPos[i * 3] = Math.cos(arm + spin) * r + spread;
+  galPos[i * 3 + 1] = spreadY;
+  galPos[i * 3 + 2] = Math.sin(arm + spin) * r + Math.pow(Math.random(), 3) * (Math.random() < .5 ? 1 : -1) * r * 0.32;
+  galRnd[i] = r / 22;
+}
+galGeo.setAttribute('position', new THREE.BufferAttribute(galPos, 3));
+galGeo.setAttribute('color', new THREE.BufferAttribute(galCol, 3));
+const galaxy = new THREE.Points(galGeo, new THREE.PointsMaterial({
+  size: 0.16, map: DOT, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+scene.add(galaxy);
+
+// 远处背景星
+const STAR_N = 2500, starPos = new Float32Array(STAR_N * 3);
+for (let i = 0; i < STAR_N; i++) {
+  const v = new THREE.Vector3().randomDirection().multiplyScalar(90 + Math.random() * 120);
+  starPos.set([v.x, v.y, v.z], i * 3);
+}
+const starGeo = new THREE.BufferGeometry();
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: .6, map: DOT, color: 0xffffff, transparent: true, opacity: .7, depthWrite: false }));
+scene.add(stars);
+
+// ---------- 星海：星系下方一片会起伏的光点海面（GPU 计算波浪） ----------
+const SEA = innerWidth < 700 ? 150 : 230, SEA_SIZE = 160;
+const seaGeo = new THREE.BufferGeometry();
+const seaPos = new Float32Array(SEA * SEA * 3);
+for (let x = 0; x < SEA; x++) for (let z = 0; z < SEA; z++) {
+  const i = (x * SEA + z) * 3;
+  seaPos[i] = (x / (SEA - 1) - .5) * SEA_SIZE;
+  seaPos[i + 2] = (z / (SEA - 1) - .5) * SEA_SIZE;
+}
+seaGeo.setAttribute('position', new THREE.BufferAttribute(seaPos, 3));
+const seaMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  uniforms: { uTime: { value: 0 }, uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() },
+    uEnergy: { value: 0 }, uPixel: { value: renderer.getPixelRatio() },
+    // 下面几个由 JS 随机漫步驱动：浪高、波长、风向，海面永远在变
+    uAmp: { value: 1 }, uFreq: { value: 1 }, uDir: { value: 0 }, uChop: { value: .5 } },
+  vertexShader: `
+    uniform float uTime, uEnergy, uPixel, uAmp, uFreq, uDir, uChop;
+    varying float vH; varying float vFade;
+    void main() {
+      vec3 p = position;
+      float d = length(p.xz);
+      // 按“风向”旋转坐标，再叠几组方向/波长不同的波；uChop 控制碎浪多少
+      float c = cos(uDir), s = sin(uDir);
+      vec2 q = vec2(c * p.x - s * p.z, s * p.x + c * p.z) * uFreq;
+      float h = (sin(q.x * .12 + uTime * .9) * .9
+              + sin(q.y * .17 - uTime * 1.1) * .7
+              + sin((q.x + q.y) * .07 + uTime * .5) * 1.1
+              + sin((q.x * .31 - q.y * .23) + uTime * 1.7) * uChop) * uAmp
+              + sin(d * .45 - uTime * 3.2) * uEnergy * 1.6 * exp(-d * .03);
+      p.y = h - 9.0;
+      vH = h;
+      vFade = smoothstep(80.0, 15.0, d);
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_PointSize = (2.6 + h * .5) * uPixel * (40.0 / -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform vec3 uC1, uC2;
+    varying float vH; varying float vFade;
+    void main() {
+      float r = length(gl_PointCoord - .5);
+      if (r > .5) discard;
+      float a = smoothstep(.5, .0, r) * vFade * (.35 + clamp(vH * .25 + .3, 0.0, .65));
+      gl_FragColor = vec4(mix(uC1, uC2, clamp(vH * .3 + .5, 0.0, 1.0)), a);
+    }`,
+});
+const sea = new THREE.Points(seaGeo, seaMat);
+scene.add(sea);
+
+// 星系在海面上的倒影：翻转的一份星系，更暗
+const reflection = new THREE.Points(galGeo, new THREE.PointsMaterial({
+  size: .14, map: DOT, vertexColors: true, transparent: true, opacity: .16, depthWrite: false, blending: THREE.AdditiveBlending }));
+reflection.scale.y = -1; reflection.position.y = -18;
+scene.add(reflection);
+
+// ---------- 流星 ----------
+const meteors = [];
+function spawnMeteor() {
+  const len = 6 + Math.random() * 8;
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(-len, len * .35, 0)]);
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array([1, 1, 1, 0, 0, 0]), 3));
+  const m = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const a = Math.random() * Math.PI * 2;
+  m.position.set(Math.cos(a) * 40, 14 + Math.random() * 18, Math.sin(a) * 40);
+  m.lookAt(0, m.position.y, 0); m.rotateY(Math.PI / 2);
+  m.userData = { v: new THREE.Vector3(.9, -.32, 0).applyQuaternion(m.quaternion).multiplyScalar(.9 + Math.random() * .6), life: 1 };
+  scene.add(m); meteors.push(m);
+}
+
+// ---------- 星核：发光球 + 两层线框 + 光环 ----------
+const core = new THREE.Group(); scene.add(core);
+const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const coreBall = new THREE.Mesh(new THREE.IcosahedronGeometry(1.25, 4), coreMat); core.add(coreBall);
+const glowMat = new THREE.SpriteMaterial({ map: DOT, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+const glow = new THREE.Sprite(glowMat); glow.scale.set(9, 9, 1); core.add(glow);
+const wire1Mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: .55 });
+const wire1 = new THREE.Mesh(new THREE.IcosahedronGeometry(2.3, 1), wire1Mat); core.add(wire1);
+const wire2Mat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: .1 });
+const wire2 = new THREE.Mesh(new THREE.TorusKnotGeometry(3.4, .03, 200, 3, 2, 5), wire2Mat); core.add(wire2);
+const ringMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false });
+const ring = new THREE.Mesh(new THREE.RingGeometry(4.6, 4.75, 128), ringMat); ring.rotation.x = Math.PI / 2.3; core.add(ring);
+
+// ---------- 能量爆发粒子（对象池） ----------
+const BURST_N = 6000;
+const bGeo = new THREE.BufferGeometry();
+const bPos = new Float32Array(BURST_N * 3), bCol = new Float32Array(BURST_N * 3);
+const bVel = new Float32Array(BURST_N * 3), bLife = new Float32Array(BURST_N);
+bGeo.setAttribute('position', new THREE.BufferAttribute(bPos, 3));
+bGeo.setAttribute('color', new THREE.BufferAttribute(bCol, 3));
+const bursts = new THREE.Points(bGeo, new THREE.PointsMaterial({
+  size: .32, map: DOT, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+scene.add(bursts);
+let bCursor = 0;
+const tmpC = new THREE.Color();
+function burst(origin, count, speed) {
+  const cs = PALETTES[pal].c.map(h => new THREE.Color(h));
+  for (let k = 0; k < count; k++) {
+    const i = bCursor; bCursor = (bCursor + 1) % BURST_N;
+    const d = new THREE.Vector3().randomDirection().multiplyScalar(speed * (0.35 + Math.random() * 0.9));
+    bPos.set([origin.x, origin.y, origin.z], i * 3);
+    bVel.set([d.x, d.y, d.z], i * 3);
+    bLife[i] = 1;
+    tmpC.copy(cs[k % cs.length]).lerp(new THREE.Color(0xffffff), Math.random() * .4);
+    bCol.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
+  }
+}
+
+// ---------- 冲击波光环 ----------
+const waves = [];
+function shockwave(strength) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(.97, 1.0, 128),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTES[pal].c[1]), side: THREE.DoubleSide, transparent: true, opacity: .9,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.lookAt(camera.position); m.userData = { t: 0, s: strength };
+  scene.add(m); waves.push(m);
+}
+
+// ---------- 配色：不是瞬间切换，而是慢慢流过去 ----------
+// 当前颜色 cur 每帧向目标 tgt 渐变；没人操作时，目标会自己随机漂向别的配色，
+// 而且常常是两套配色之间的某个“混合色”，所以颜色组合几乎不会重复。
+const cur = [0, 1, 2, 3].map(() => new THREE.Color()), tgt = [0, 1, 2, 3].map(() => new THREE.Color());
+const WHITE = new THREE.Color(0xffffff);
+const galWhite = new Float32Array(GAL_N);   // 每颗星固定的“偏白程度”，避免每次重算时闪烁
+for (let n = 0; n < GAL_N; n++) galWhite[n] = Math.max(0, .35 - galRnd[n]) * 1.6 * Math.random();
+function paletteColors(P) { return [...P.c, P.core].map(h => new THREE.Color(h)); }
+function setTarget(cols) { cols.forEach((c, k) => tgt[k].copy(c)); }
+function paintAll() {
+  for (let n = 0; n < GAL_N; n++) {
+    const t = galRnd[n];
+    if (t < .5) tmpC.copy(cur[0]).lerp(cur[1], t * 2); else tmpC.copy(cur[1]).lerp(cur[2], (t - .5) * 2);
+    tmpC.lerp(WHITE, galWhite[n]);
+    galCol[n * 3] = tmpC.r; galCol[n * 3 + 1] = tmpC.g; galCol[n * 3 + 2] = tmpC.b;
+  }
+  galGeo.attributes.color.needsUpdate = true;
+  coreMat.color.copy(cur[3]).lerp(WHITE, .55);
+  glowMat.color.copy(cur[3]);
+  wire1Mat.color.copy(cur[0]); wire2Mat.color.copy(cur[2]); ringMat.color.copy(cur[1]);
+  seaMat.uniforms.uC1.value.copy(cur[2]).multiplyScalar(.7); seaMat.uniforms.uC2.value.copy(cur[0]);
+  const root = document.documentElement.style;
+  cur.slice(0, 3).forEach((c, k) => root.setProperty('--c' + (k + 1), '#' + c.getHexString()));
+}
+let lastManual = 0;
+function applyPalette(i, announce) {
+  pal = (i + PALETTES.length) % PALETTES.length;
+  setTarget(paletteColors(PALETTES[pal]));
+  if (announce) { lastManual = performance.now(); toast('配色：' + PALETTES[pal].name); bell(SCALE[pal % 5 + 3], .09, 2.4); }
+}
+// 自动漂移：随机挑一套，或两套之间的随机混合
+function wanderPalette() {
+  const a = paletteColors(pick(PALETTES)), b = paletteColors(pick(PALETTES)), k = Math.random() < .55 ? rnd(.2, .8) : 0;
+  setTarget(a.map((c, i) => c.lerp(b[i], k)));
+}
+// 首屏直接用第一套，不渐变
+paletteColors(PALETTES[0]).forEach((c, k) => { cur[k].copy(c); tgt[k].copy(c); });
+paintAll();
+
+// ---------- 声音（WebAudio 现场合成，没有音频文件；默认关闭） ----------
+// 结构：所有声音 → 干声 + 大混响（4.5 秒、立体声）+ 回声延迟 → 压缩器 → 输出
+// 背景是“生成式”的：不是一段循环，而是每时每刻随机决定接下来做什么——
+//   和弦按概率走向下一个（马尔可夫链），每个和弦停留 7~22 秒不等，偶尔换个转位；
+//   每隔一两分钟可能转调；滤波、音量、海浪都在随机漫步；
+//   上方还有一串“风铃”旋律，节奏、疏密、音区全是随机的，永远不会重复同一段。
+let actx = null, master = null, soundOn = false, bus = null, verb = null, echo = null;
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+// 和弦：相对调主音（第 3 八度）的半音数，四个声部
+const CHORD_SET = {
+  I:    [0, 7, 14, 16],     // maj9
+  ii:   [2, 9, 16, 19],     // m7 add9
+  iii:  [4, 11, 14, 19],    // m7
+  IV:   [-7, 0, 9, 16],     // maj7
+  IV9:  [-7, 2, 9, 16],     // maj9
+  V:    [-5, 2, 9, 16],     // 6sus
+  vi:   [-3, 4, 12, 14],    // m11
+  bVII: [-2, 5, 9, 12],     // 借来的大七，偶尔一抹意外的颜色
+};
+// 每个和弦走向下一个的权重
+const NEXT = {
+  I: { IV: 3, vi: 3, ii: 2, V: 1, iii: 1, bVII: 1 },
+  ii: { V: 3, IV9: 2, I: 1, vi: 1 },
+  iii: { vi: 3, IV: 2, ii: 1 },
+  IV: { I: 3, V: 2, ii: 1, vi: 1, bVII: 1 },
+  IV9: { I: 2, iii: 1, V: 2, vi: 1 },
+  V: { I: 3, vi: 2, IV: 1, iii: 1 },
+  vi: { IV: 3, ii: 2, V: 1, I: 1, iii: 1 },
+  bVII: { IV: 2, I: 3 },
+};
+const weighted = obj => { let r = Math.random() * Object.values(obj).reduce((a, b) => a + b, 0);
+  for (const [k, w] of Object.entries(obj)) if ((r -= w) < 0) return k; return Object.keys(obj)[0]; };
+let keyRoot = 50;        // D3
+let chordName = 'I';
+const PENTA = [0, 2, 4, 7, 9];
+// 互动音效用的音阶，随调性变化
+let SCALE = [];
+function rebuildScale() {
+  SCALE = [];
+  for (let o = 0; o < 3 && SCALE.length < 11; o++) for (const d of PENTA) if (SCALE.length < 11) SCALE.push(mtof(keyRoot + 12 + o * 12 + d));
+}
+rebuildScale();
+function noiseBuffer(sec) {
+  const b = actx.createBuffer(2, actx.sampleRate * sec, actx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  return b;
+}
+function initAudio() {
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  const comp = actx.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.ratio.value = 3; comp.connect(actx.destination);
+  master = actx.createGain(); master.gain.value = 0; master.connect(comp);
+
+  // 混响：用逐渐衰减的立体声噪声当“空间”，听起来像很大的穹顶
+  verb = actx.createConvolver();
+  const ir = actx.createBuffer(2, actx.sampleRate * 4.5, actx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = ir.getChannelData(ch);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.6);
+  }
+  verb.buffer = ir;
+  const verbOut = actx.createGain(); verbOut.gain.value = .9; verb.connect(verbOut); verbOut.connect(master);
+
+  // 回声：0.42 秒、逐次变暗
+  echo = actx.createDelay(2); echo.delayTime.value = .42;
+  const fb = actx.createGain(); fb.gain.value = .38;
+  const echoLp = actx.createBiquadFilter(); echoLp.type = 'lowpass'; echoLp.frequency.value = 2600;
+  echo.connect(echoLp); echoLp.connect(fb); fb.connect(echo);
+  const echoOut = actx.createGain(); echoOut.gain.value = .45; echoLp.connect(echoOut); echoOut.connect(master); echoOut.connect(verb);
+
+  // bus：音效的入口，一路干声、一路进混响
+  bus = actx.createGain();
+  const dry = actx.createGain(); dry.gain.value = .55;
+  bus.connect(dry); dry.connect(master); bus.connect(verb);
+
+  // ---- 铺底和弦：每个音两个略微失谐的振荡器，过一个会慢慢开合的低通 ----
+  const padLp = actx.createBiquadFilter(); padLp.type = 'lowpass'; padLp.frequency.value = 900; padLp.Q.value = .7;
+  const padGain = actx.createGain(); padGain.gain.value = .045;
+  padLp.connect(padGain); padGain.connect(master); padGain.connect(verb);
+  const voices = CHORD_SET.I.map(s => {
+    const pair = [-6, 6].map((cents, k) => {
+      const o = actx.createOscillator();
+      o.type = k ? 'triangle' : 'sawtooth'; o.frequency.value = mtof(keyRoot + s); o.detune.value = cents + rnd(-3, 3);
+      const g = actx.createGain(); g.gain.value = k ? .6 : .25;
+      o.connect(g); g.connect(padLp); o.start();
+      return o;
+    });
+    return pair;
+  });
+  // ---- 和弦：按概率走，停留时间、滑音快慢、转位都随机 ----
+  function nextChord() {
+    chordName = weighted(NEXT[chordName]);
+    const shape = CHORD_SET[chordName].map(s => s + (Math.random() < .2 ? pick([12, -12]) : 0));   // 偶尔某个声部跳八度
+    const glide = rnd(.5, 2.8);
+    voices.forEach((pair, v) => pair.forEach(o => o.frequency.setTargetAtTime(mtof(keyRoot + shape[v]), actx.currentTime, glide)));
+    setTimeout(nextChord, rnd(7, 22) * 1000);
+  }
+  setTimeout(nextChord, rnd(6, 14) * 1000);
+
+  // ---- 转调：一两分钟到几分钟一次，往四度/五度/二度方向挪，音域保持在中低区 ----
+  (function modulate() {
+    setTimeout(() => {
+      let to = keyRoot + pick([5, -5, 7, -7, 2, -2, 3, -3]);
+      while (to > 55) to -= 12; while (to < 43) to += 12;
+      keyRoot = to; rebuildScale();
+      modulate();
+    }, rnd(90, 260) * 1000);
+  })();
+
+  // ---- 铺底的亮度和音量：随机漫步 ----
+  (function drift() {
+    const t = actx.currentTime;
+    padLp.frequency.setTargetAtTime(rnd(320, 1700), t, rnd(1.5, 6));
+    padGain.gain.setTargetAtTime(rnd(.025, .06), t, rnd(2, 8));
+    setTimeout(drift, rnd(3, 11) * 1000);
+  })();
+
+  // ---- 海浪：每一浪的大小、长短、明暗都不一样 ----
+  const wave = actx.createBufferSource(); wave.buffer = noiseBuffer(6); wave.loop = true;
+  const waveLp = actx.createBiquadFilter(); waveLp.type = 'lowpass'; waveLp.frequency.value = 500;
+  const waveGain = actx.createGain(); waveGain.gain.value = .02;
+  wave.connect(waveLp); waveLp.connect(waveGain); waveGain.connect(master); waveGain.connect(verb);
+  wave.start();
+  (function swell() {
+    const t = actx.currentTime, rise = rnd(1.5, 5), fall = rnd(2, 7), peak = rnd(.02, .085);
+    waveGain.gain.setTargetAtTime(peak, t, rise / 3);
+    waveLp.frequency.setTargetAtTime(rnd(450, 1300), t, rise / 3);
+    setTimeout(() => {
+      waveGain.gain.setTargetAtTime(rnd(.004, .02), actx.currentTime, fall / 3);
+      waveLp.frequency.setTargetAtTime(rnd(200, 450), actx.currentTime, fall / 3);
+    }, rise * 1000);
+    setTimeout(swell, (rise + fall + rnd(0, 4)) * 1000);
+  })();
+
+  // ---- 风铃旋律：疏密、句子长短、音区、力度都随机，偶尔留一大段空白 ----
+  let density = .5;
+  (function chime() {
+    density = Math.min(1, Math.max(.1, density + rnd(-.15, .15)));   // 密度本身也在漂移
+    if (Math.random() < .12) { setTimeout(chime, rnd(10, 25) * 1000); return; }   // 安静一会儿
+    const len = weighted({ 1: 3, 2: 3, 3: 2, 4: 1, 6: .5 }) | 0;
+    let idx = Math.floor(rnd(2, 9));
+    const oct = pick([0, 0, 1, 1, 2]);
+    for (let k = 0; k < len; k++) {
+      idx = Math.max(0, Math.min(14, idx + pick([-2, -1, -1, 1, 1, 2, 0])));
+      const m = keyRoot + 12 + oct * 12 + Math.floor(idx / 5) * 12 + PENTA[idx % 5];
+      bell(mtof(Math.min(m, 100)), rnd(.025, .075) * (soundOn ? 1 : 0), rnd(2, 4.5), k * rnd(.18, .55));
+    }
+    setTimeout(chime, rnd(1.5, 9) / density * 1000);
+  })();
+}
+
+// 铃音：基音 + 一个不和谐泛音（像钟/钢片琴），快起慢落，带回声和混响
+function bell(freq, vol = .16, len = 2.6, when = 0) {
+  if (!soundOn || !actx) return;
+  const t = actx.currentTime + when;
+  [[1, 1, len], [2.76, .35, len * .45], [5.4, .12, len * .2]].forEach(([ratio, amp, l]) => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sine'; o.frequency.value = freq * ratio;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol * amp, t + .008);
+    g.gain.exponentialRampToValueAtTime(.0001, t + l);
+    o.connect(g); g.connect(bus); g.connect(echo);
+    o.start(t); o.stop(t + l + .05);
+  });
+}
+// 兼容前面调用的名字
+const blip = (freq, dur, vol) => bell(freq, vol ? vol * 1.4 : .16);
+// 呼啸：噪声 + 低通从高扫到低，再加一个下滑的超低音（黑洞用）
+function whoosh(sec = 3) {
+  if (!soundOn || !actx) return;
+  const t = actx.currentTime;
+  const n = actx.createBufferSource(); n.buffer = noiseBuffer(sec + .5);
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 6;
+  lp.frequency.setValueAtTime(3000, t); lp.frequency.exponentialRampToValueAtTime(60, t + sec);
+  const g = actx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.3, t + sec * .6); g.gain.linearRampToValueAtTime(0, t + sec);
+  n.connect(lp); lp.connect(g); g.connect(bus); n.start(t); n.stop(t + sec + .5);
+  const sub = actx.createOscillator(), sg = actx.createGain();
+  sub.frequency.setValueAtTime(90, t); sub.frequency.exponentialRampToValueAtTime(28, t + sec);
+  sg.gain.setValueAtTime(0, t); sg.gain.linearRampToValueAtTime(.35, t + sec * .7); sg.gain.linearRampToValueAtTime(0, t + sec + .3);
+  sub.connect(sg); sg.connect(master); sub.start(t); sub.stop(t + sec + .4);
+}
+// SCALE（互动音效用的五声音阶）在上面随调性生成，转调后点击声也跟着变
+function toggleSound() {
+  soundOn = !soundOn;
+  if (soundOn && !actx) initAudio();
+  if (actx) { actx.resume(); master.gain.setTargetAtTime(soundOn ? 1 : 0, actx.currentTime, .6); }
+  $('bSound').textContent = soundOn ? '🔊' : '🔇';
+  toast(soundOn ? '声音已开启' : '声音已关闭');
+}
+
+// ---------- 星图碎片：散落在星海各处的 7 个金色光点，找到会浮现一句话 ----------
+const FRAG_LINES = [
+  '每一束星光，都是很久以前出发的。',
+  '海面记得所有落下的流星。',
+  '旋臂的尽头，还有旋臂。',
+  '安静的地方，也在缓慢转动。',
+  '倒影里的星系，比天上的更亮一点。',
+  '走得足够远，回头才看得清全貌。',
+  '这里不是终点。',
+];
+// 位置刻意分散：旋臂里、海面上、倒影深处、远方需要拉远视角才看得到
+const FRAG_POS = [[9, 1.5, -4], [-13, 2.5, 7], [4, -6.5, 14], [-6, 4, -15], [2, -16, -6], [44, 10, -30], [-18, .5, -10]];
+const found = new Set((() => { try { return JSON.parse(localStorage.getItem('vv-frags') || '[]'); } catch (e) { return []; } })());
+const frags = FRAG_POS.map((p, i) => {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: DOT, color: 0xfde68a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  s.position.set(...p); s.scale.setScalar(1.6); s.userData = { i, phase: Math.random() * 6 };
+  s.visible = !found.has(i);
+  galaxy.add(s);   // 挂在星系上，跟着旋转，要“追”着点
+  return s;
+});
+function updateFragUI() {
+  $('nFrag').textContent = found.size;
+  $('frag').classList.toggle('done', found.size === FRAG_LINES.length);
+}
+updateFragUI();
+function showCard(tag, text, ms = 4200) {
+  $('cardTag').textContent = tag; $('cardText').textContent = text;
+  $('card').classList.add('show');
+  clearTimeout(showCard.t); showCard.t = setTimeout(() => $('card').classList.remove('show'), ms);
+}
+function collect(s) {
+  const i = s.userData.i;
+  s.visible = false; found.add(i);
+  try { localStorage.setItem('vv-frags', JSON.stringify([...found])); } catch (e) {}
+  burst(s.getWorldPosition(new THREE.Vector3()), 320, .22);
+  // 找到碎片：一串上行琶音，像星星落进水里
+  [0, 2, 3, 5, 7, 10].forEach((n, k) => bell(SCALE[n], .12, 3.2, k * .11));
+  updateFragUI();
+  showCard(`碎片 ${found.size} / ${FRAG_LINES.length}`, FRAG_LINES[i]);
+  if (found.size === FRAG_LINES.length) setTimeout(unlockFinale, 4600);
+}
+// 全部找到：解锁“鎏金”配色，并给出下一个秘密的线索
+function unlockFinale() {
+  if (!PALETTES.some(p => p.name === '鎏金')) PALETTES.push({ name: '鎏金', c: ['#fff7d6', '#fde68a', '#f59e0b'], core: '#fbbf24' });
+  applyPalette(PALETTES.length - 1);
+  nova();
+  showCard('星图已点亮', '解锁新配色「鎏金」。更深处还藏着一个秘密：试试在键盘上输入 ↑ ↑ ↓ ↓', 7000);
+}
+if (found.size === FRAG_LINES.length && !PALETTES.some(p => p.name === '鎏金'))
+  PALETTES.push({ name: '鎏金', c: ['#fff7d6', '#fde68a', '#f59e0b'], core: '#fbbf24' });
+
+// ---------- 秘密：黑洞模式（键盘 ↑↑↓↓，手机上长按星核 2 秒） ----------
+let hole = 0, holeDir = 0;
+function blackHole() {
+  if (holeDir) return;
+  holeDir = 1; toast('引力失控…');
+  whoosh(3.2);
+  setTimeout(() => [0, 3, 5, 8].forEach((n, k) => bell(SCALE[n] / 2, .18, 4, k * .06)), 3200);   // 爆发回来时一个和弦
+  setTimeout(() => {   // 吞噬到最小后，爆发回来
+    holeDir = -1;
+    burst(new THREE.Vector3(), 3200, 1.2);
+    for (let k = 0; k < 4; k++) setTimeout(() => shockwave(2.6 - k * .45), k * 120);
+    showCard('事件视界', '一切被吞没，又一切重新开始。', 3600);
+  }, 3200);
+}
+const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown'];
+let keyBuf = [];
+addEventListener('keydown', e => {
+  keyBuf = [...keyBuf, e.key].slice(-4);
+  if (keyBuf.join() === KONAMI.join()) { keyBuf = []; blackHole(); }
+});
+
+// ---------- 随机漫步：画面的各种“性格”参数都在慢慢地、不规律地变 ----------
+// 每个参数随机挑一个新目标值和一段随机时长，平滑过去；到了再挑下一个。没有周期，不会循环。
+class Drift {
+  constructor(min, max, tMin, tMax) { Object.assign(this, { min, max, tMin, tMax }); this.v = this.to = rnd(min, max); this.next(); }
+  next() { this.from = this.v; this.to = rnd(this.min, this.max); this.dur = rnd(this.tMin, this.tMax); this.t = 0; }
+  step(dt) {
+    this.t += dt;
+    const k = Math.min(1, this.t / this.dur), e = k * k * (3 - 2 * k);   // smoothstep，起止都柔和
+    this.v = this.from + (this.to - this.from) * e;
+    if (k >= 1) this.next();
+    return this.v;
+  }
+}
+const D = {
+  seaAmp:   new Drift(.45, 1.7, 8, 30),     // 浪高：风平浪静 ↔ 波涛起伏
+  seaFreq:  new Drift(.6, 1.5, 10, 40),     // 波长
+  seaDir:   new Drift(-1.2, 1.2, 20, 70),   // 风向
+  seaChop:  new Drift(0, 1.2, 6, 25),       // 碎浪
+  seaSpeed: new Drift(.6, 1.5, 10, 35),     // 浪速
+  spin:     new Drift(.4, 2.2, 12, 45),     // 星系转速
+  tilt:     new Drift(-.12, .12, 15, 50),   // 星系轻微倾斜摆动
+  fog:      new Drift(.012, .026, 15, 50),  // 雾气浓淡
+  meteor:   new Drift(1.2, 7, 10, 40),      // 流星平均间隔（秒）
+};
+// 星系里的偶发事件
+let nextStarBirth = rnd(8, 25), nextShower = rnd(45, 120), nextWander = rnd(40, 90), shower = 0;
+function starBirth() {   // 旋臂某处悄悄亮起一颗新星
+  const i = Math.floor(Math.random() * GAL_N);
+  const p = new THREE.Vector3(galPos[i * 3], galPos[i * 3 + 1], galPos[i * 3 + 2]).applyMatrix4(galaxy.matrixWorld);
+  burst(p, 90 + Math.random() * 120, rnd(.05, .12));
+  if (Math.random() < .5) bell(SCALE[Math.floor(rnd(4, 11))], .04, 3);
+}
+
+// ---------- 闲置漫游：一段时间不操作，镜头自己慢慢巡游 ----------
+let idle = 0;
+['pointerdown', 'wheel', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, () => { idle = 0; }, { passive: true }));
+
+// ---------- 交互 ----------
+let combo = 0, comboTimer = 0, total = 0, energy = 0, warp = 0, hover = false;
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(), hitSphere = new THREE.Sphere(new THREE.Vector3(), 3);
+let downAt = null;
+
+function toast(t) {
+  const el = $('toast'); el.textContent = t; el.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 1400);
+}
+function release(power) {
+  total++; $('nBurst').textContent = total;
+  energy = Math.min(1.6, energy + .35 * power);
+  burst(new THREE.Vector3(), Math.round(260 * power), 0.32 * power);
+  shockwave(power);
+  const msgs = ['', '', '', '连击 ×3', '能量过载！', '连击 ×5 🔥', '', '停不下来了', '', '', '十连击 ⚡'];
+  if (msgs[combo]) toast(msgs[combo]);
+  if (combo >= 10 && combo % 10 === 0) toast(`${combo} 连击 ⚡`);
+}
+function nova() {
+  combo = 0;
+  whoosh(1.2);
+  [0, 2, 3, 5, 7].forEach((n, k) => bell(SCALE[n] / 2, .16, 4.5, .9 + k * .03));   // 一个宽广的大和弦
+  burst(new THREE.Vector3(), 2600, 1.05);
+  for (let k = 0; k < 3; k++) setTimeout(() => shockwave(2.4 - k * .5), k * 140);
+  energy = 1.6; total++; $('nBurst').textContent = total;
+  toast('超新星 💥');
+}
+function doWarp() {
+  warp = 1; toast('跃迁中…');
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach((n, k) => bell(SCALE[n], .07, 1.6, k * .07));   // 一路向上的音阶
+}
+
+let holdTimer = 0;
+renderer.domElement.addEventListener('pointerdown', e => {
+  downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+  // 长按星核 2 秒：黑洞（给手机用的秘密入口）
+  ptr.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  clearTimeout(holdTimer);
+  if (ray.ray.intersectsSphere(hitSphere)) holdTimer = setTimeout(() => { downAt = null; blackHole(); }, 2000);
+});
+['pointercancel', 'pointerleave'].forEach(ev => renderer.domElement.addEventListener(ev, () => clearTimeout(holdTimer)));
+renderer.domElement.addEventListener('pointerup', e => {
+  clearTimeout(holdTimer);
+  // 区分“点击”和“拖动旋转”：移动很少且时间短才算点击
+  if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6 || performance.now() - downAt.t > 400) return;
+  ptr.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  // 先看有没有点中碎片（按射线到光点的距离算，手机上也好点）
+  const wp = new THREE.Vector3();
+  const hit = frags.filter(s => s.visible)
+    .map(s => ({ s, d: ray.ray.distanceSqToPoint(s.getWorldPosition(wp)), z: wp.distanceTo(camera.position) }))
+    .filter(h => h.d < Math.pow(1.2 + h.z * .03, 2))
+    .sort((a, b) => a.z - b.z)[0];
+  if (hit) { collect(hit.s); return; }
+  if (ray.ray.intersectsSphere(hitSphere)) {
+    blip(SCALE[Math.min(combo, SCALE.length - 1)], .3, .1);
+    combo++; comboTimer = 1.2;
+    release(1 + Math.min(combo, 12) * .18);
+  } else {
+    // 点在空白处：在那个方向的远处炸一朵小烟花
+    const p = ray.ray.at(18 + Math.random() * 8, new THREE.Vector3());
+    burst(p, 140, .16);
+    bell(SCALE[5 + Math.floor(Math.random() * 6)], .06, 2);   // 远处的小烟花：轻轻一声高音
+  }
+});
+renderer.domElement.addEventListener('pointermove', e => {
+  ptr.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  hover = ray.ray.intersectsSphere(hitSphere);
+  renderer.domElement.style.cursor = hover ? 'pointer' : '';
+});
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); nova(); }
+  else if (e.key === 'c' || e.key === 'C') applyPalette(pal + 1, true);
+  else if (e.key === 'w' || e.key === 'W') doWarp();
+});
+$('bPalette').onclick = () => applyPalette(pal + 1, true);
+$('bNova').onclick = nova;
+$('bWarp').onclick = doWarp;
+$('bSound').onclick = toggleSound;
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- 动画 ----------
+const clock = new THREE.Clock();
+let seaPhase = 0, paintAt = 0;
+const baseFov = camera.fov;
+function tick() {
+  const dt = Math.min(clock.getDelta(), .05), t = clock.elapsedTime;
+  const speed = reduced ? .2 : 1;
+
+  // 黑洞：星系急速旋转并坍缩到中心，再弹回
+  if (holeDir === 1) hole = Math.min(1, hole + dt * .4);
+  else if (holeDir === -1) { hole = Math.max(0, hole - dt * 1.6); if (!hole) holeDir = 0; }
+  const shrink = 1 - hole * .93;
+  galaxy.scale.set(shrink, 1 - hole * .6, shrink);
+  reflection.scale.set(shrink, -(1 - hole * .6), shrink);
+  sea.scale.setScalar(1 - hole * .5);
+
+  // 随机漫步的参数
+  for (const k in D) D[k].step(dt);
+  galaxy.rotation.y += dt * (.035 * D.spin.v + energy * .12 + warp * .8 + hole * 4) * speed;
+  galaxy.rotation.x = D.tilt.v; galaxy.rotation.z = D.tilt.v * -.6;
+  reflection.rotation.y = galaxy.rotation.y;
+  scene.fog.density = D.fog.v;
+  seaMat.uniforms.uAmp.value = D.seaAmp.v; seaMat.uniforms.uFreq.value = D.seaFreq.v;
+  seaMat.uniforms.uDir.value = D.seaDir.v; seaMat.uniforms.uChop.value = D.seaChop.v;
+  seaPhase += dt * D.seaSpeed.v * speed;
+
+  // 颜色向目标流动；有变化时每 0.2 秒重画一次星系颜色（2 万多颗星，不必每帧算）
+  let moving = false;
+  for (let k = 0; k < 4; k++) if (!cur[k].equals(tgt[k])) {
+    cur[k].lerp(tgt[k], Math.min(1, dt * .35));
+    if (Math.abs(cur[k].r - tgt[k].r) + Math.abs(cur[k].g - tgt[k].g) + Math.abs(cur[k].b - tgt[k].b) < .003) cur[k].copy(tgt[k]);
+    moving = true;
+  }
+  if (moving && (paintAt += dt) > .2) { paintAt = 0; paintAll(); }
+
+  // 偶发事件：新星诞生、流星雨、配色自己漂移（手动选过配色后 3 分钟内不自动变）
+  if ((nextStarBirth -= dt) <= 0) { starBirth(); nextStarBirth = rnd(6, 40); }
+  if ((nextShower -= dt) <= 0) { shower = rnd(2.5, 6); nextShower = rnd(70, 220); if (!reduced) toast('流星雨 ✧'); }
+  if (shower > 0) { shower -= dt; if (!reduced && Math.random() < dt * 9) spawnMeteor(); }
+  if ((nextWander -= dt) <= 0) { if (performance.now() - lastManual > 180000) wanderPalette(); nextWander = rnd(45, 150); }
+
+  // 碎片一闪一闪
+  for (const s of frags) if (s.visible) s.scale.setScalar(1.4 + Math.sin(t * 2.4 + s.userData.phase) * .45);
+
+  // 闲置 25 秒后自动巡游：镜头缓慢升降、转得快一点
+  idle += dt;
+  const cruise = Math.min(1, Math.max(0, (idle - 25) / 5));
+  if (cruise > 0 && !warp) {
+    controls.autoRotateSpeed = .35 + cruise * 1.1;
+    camera.position.y += (Math.sin(t * .12) * 9 + 5 - camera.position.y) * dt * .15 * cruise;
+  }
+  stars.rotation.y -= dt * .004;
+  seaMat.uniforms.uTime.value = seaPhase;
+  seaMat.uniforms.uEnergy.value = energy;
+
+  // 流星：平均每 2.5 秒一颗
+  if (!reduced && Math.random() < dt / D.meteor.v) {
+    spawnMeteor();
+    if (Math.random() < .5) bell(SCALE[6 + Math.floor(Math.random() * 5)], .025, 2.5);   // 流星偶尔带一点很轻的闪光声
+  }
+  for (let k = meteors.length - 1; k >= 0; k--) {
+    const m = meteors[k]; m.position.add(m.userData.v); m.userData.life -= dt * .7;
+    m.material.opacity = Math.max(0, m.userData.life);
+    if (m.userData.life <= 0) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); meteors.splice(k, 1); }
+  }
+
+  // 星核呼吸 + 能量膨胀
+  energy = Math.max(0, energy - dt * .55);
+  const pulse = 1 + Math.sin(t * 2.2) * .04 + energy * .35 + (hover ? .08 : 0);
+  coreBall.scale.setScalar(pulse);
+  glow.scale.setScalar(9 * (1 + energy * .9) + Math.sin(t * 3) * .4);
+  wire1.rotation.x += dt * (.25 + energy * 2); wire1.rotation.y += dt * (.32 + energy * 2.4);
+  wire2.rotation.z -= dt * (.12 + energy); wire2.rotation.y += dt * .08;
+  ring.rotation.z += dt * (.3 + energy * 3);
+  wire1Mat.opacity = .45 + energy * .35;
+
+  // 连击计时
+  if (comboTimer > 0 && (comboTimer -= dt) <= 0) combo = 0;
+
+  // 爆发粒子：飞出、减速、渐隐
+  for (let i = 0; i < BURST_N; i++) {
+    if (bLife[i] <= 0) continue;
+    const j = i * 3;
+    bPos[j] += bVel[j]; bPos[j + 1] += bVel[j + 1]; bPos[j + 2] += bVel[j + 2];
+    bVel[j] *= .965; bVel[j + 1] = bVel[j + 1] * .965 - .0015; bVel[j + 2] *= .965;
+    bLife[i] -= dt * .5;
+    const f = Math.max(0, bLife[i]);
+    bCol[j] *= .985 + f * .015; bCol[j + 1] *= .985 + f * .015; bCol[j + 2] *= .985 + f * .015;
+    if (bLife[i] <= 0) bPos[j + 1] = 9999;
+  }
+  bGeo.attributes.position.needsUpdate = true; bGeo.attributes.color.needsUpdate = true;
+
+  // 冲击波
+  for (let k = waves.length - 1; k >= 0; k--) {
+    const w = waves[k]; w.userData.t += dt;
+    const p = w.userData.t / 1.1;
+    w.scale.setScalar(1 + p * 14 * w.userData.s);
+    w.material.opacity = Math.max(0, .9 * (1 - p));
+    if (p >= 1) { scene.remove(w); w.geometry.dispose(); w.material.dispose(); waves.splice(k, 1); }
+  }
+
+  // 跃迁：视角拉伸 + 冲向星核再回来
+  if (warp > 0) {
+    warp = Math.max(0, warp - dt * .45);
+    const k = Math.sin(warp * Math.PI);
+    camera.fov = baseFov + k * 45;
+    camera.updateProjectionMatrix();
+    controls.autoRotateSpeed = .35 + k * 12;
+  } else if (camera.fov !== baseFov) { camera.fov = baseFov; camera.updateProjectionMatrix(); controls.autoRotateSpeed = .35; }
+  else if (!cruise) controls.autoRotateSpeed = .35;
+
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+tick();
+setTimeout(() => toast('点击中间的星核试试'), 1800);
+// 第一次来的提示一下碎片；回访的人提示进度
+setTimeout(() => {
+  if (!found.size) toast('星海里藏着 7 个金色碎片 ✦');
+  else if (found.size < FRAG_LINES.length) toast(`欢迎回来，还剩 ${FRAG_LINES.length - found.size} 个碎片`);
+}, 6500);
+</script>
+</body>
+</html>
